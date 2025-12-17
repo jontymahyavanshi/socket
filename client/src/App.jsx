@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
+import { ThemeProvider, createTheme, CssBaseline, CircularProgress } from "@mui/material";
 import Login from "./Login";
 import Register from "./Register";
 import Chat from "./Chat";
@@ -8,78 +9,100 @@ const App = () => {
   const [currentPage, setCurrentPage] = useState("login"); 
   const [loading, setLoading] = useState(true); 
 
-  // 1. Check Local Storage when app loads
+  // --- 1. PERSIST DARK MODE STATE ---
+  // Initialize state by checking localStorage first
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    return localStorage.getItem("chatAppTheme") === "dark";
+  });
+
+  // --- 2. SAVE THEME CHANGES ---
+  // Whenever isDarkMode changes, save it to localStorage
+  useEffect(() => {
+    localStorage.setItem("chatAppTheme", isDarkMode ? "dark" : "light");
+  }, [isDarkMode]);
+
+  // --- PROFESSIONAL THEME CONFIGURATION ---
+  const theme = useMemo(() => createTheme({
+    palette: {
+      mode: isDarkMode ? 'dark' : 'light',
+      primary: {
+        main: isDarkMode ? '#00a884' : '#008069', 
+      },
+      background: {
+        default: isDarkMode ? '#0b141a' : '#efeae2', 
+        paper: isDarkMode ? '#202c33' : '#ffffff',   
+      },
+      text: {
+        primary: isDarkMode ? '#e9edef' : '#111b21',
+        secondary: isDarkMode ? '#8696a0' : '#667781',
+      },
+      action: {
+        hover: isDarkMode ? '#2a3942' : '#f5f6f6',
+        selected: isDarkMode ? '#2a3942' : '#f0f2f5',
+      }
+    },
+    components: {
+      MuiDialog: {
+        styleOverrides: {
+          paper: {
+            backgroundColor: isDarkMode ? '#222e35' : '#ffffff',
+          }
+        }
+      }
+    }
+  }), [isDarkMode]);
+
+  const handleToggleTheme = () => setIsDarkMode((prev) => !prev);
+
+  // --- AUTH LOGIC (Same as before) ---
   useEffect(() => {
     const savedUser = localStorage.getItem("chatUser");
     if (savedUser) {
       try {
         const parsedUser = JSON.parse(savedUser);
-        // Safety check: ensure the saved user actually has an ID
-        if (parsedUser && parsedUser._id) {
-            setUser(parsedUser);
-        } else {
-            localStorage.removeItem("chatUser"); // Clear invalid data
-        }
-      } catch (e) {
-        localStorage.removeItem("chatUser");
-      }
+        if (parsedUser && parsedUser._id) setUser(parsedUser);
+      } catch (e) {}
     }
     setLoading(false);
   }, []);
 
-  // 2. Handle Login (Save the FULL object: { _id, name, email, about })
   const handleLoginSuccess = (userData) => {
     localStorage.setItem("chatUser", JSON.stringify(userData));
     setUser(userData);
   };
 
-  // 3. Handle Logout
   const handleLogout = () => {
     localStorage.removeItem("chatUser");
     setUser(null);
     setCurrentPage("login");
   };
 
-  // 4. NEW: Handle User Profile Updates (Name/About)
   const handleUserUpdate = (updatedData) => {
-    // Merge existing user data with the new updates
     const newUser = { ...user, ...updatedData };
     setUser(newUser);
     localStorage.setItem("chatUser", JSON.stringify(newUser));
   };
 
-  if (loading) {
-    return <div style={{ textAlign: "center", marginTop: "50px" }}>Loading...</div>;
-  }
+  if (loading) return <div><CircularProgress/></div>;
 
-  // 5. Render Chat if Logged In
-  if (user) {
-    return (
+  return (
+    <ThemeProvider theme={theme}>
+      <CssBaseline /> 
+      {user ? (
         <Chat 
             user={user} 
             onLogout={handleLogout} 
-            onUpdateUser={handleUserUpdate} // <--- PASS THIS PROP
+            onUpdateUser={handleUserUpdate}
+            isDarkMode={isDarkMode}
+            onToggleTheme={handleToggleTheme}
         />
-    );
-  }
-
-  // 6. Render Login/Register
-  return (
-    <>
-      {currentPage === "login" && (
-        <Login 
-          onLoginSuccess={handleLoginSuccess} 
-          onSwitchToRegister={() => setCurrentPage("register")} 
-        />
+      ) : (
+        <>
+          {currentPage === "login" && <Login onLoginSuccess={handleLoginSuccess} onSwitchToRegister={() => setCurrentPage("register")} />}
+          {currentPage === "register" && <Register onRegisterSuccess={() => setCurrentPage("login")} onSwitchToLogin={() => setCurrentPage("login")} />}
+        </>
       )}
-      
-      {currentPage === "register" && (
-        <Register 
-          onRegisterSuccess={() => setCurrentPage("login")} 
-          onSwitchToLogin={() => setCurrentPage("login")} 
-        />
-      )}
-    </>
+    </ThemeProvider>
   );
 };
 

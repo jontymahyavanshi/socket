@@ -1,3 +1,4 @@
+// src/Register.jsx
 import React, { useState } from 'react';
 import { Container, Paper, Typography, TextField, Button, Box, Alert } from '@mui/material';
 

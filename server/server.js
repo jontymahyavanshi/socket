@@ -1,3 +1,4 @@
+// server/server.js
 import express from 'express';
 import { Server } from 'socket.io';
 import { createServer } from 'http';
@@ -8,8 +9,9 @@ import multer from 'multer';
 import path from 'path';     
 import fs from 'fs';        
 
-// --- IMPORT THE CALL HANDLER ---
+// --- IMPORT HANDLERS ---
 import { callHandler } from './handlers/callHandler.js'; 
+import { deleteMessage } from './handlers/messageController.js';
 
 const port = 5000;
 const app = express();
@@ -26,12 +28,16 @@ const io = new Server(server, {
   cors: { 
     origin: [ "http://localhost:5173", 
               "http://localhost:3000",
-              "http://10.162.6.2:5173", 
-              "http://10.162.6.2:3000"], 
+              /* "http://10.142.215.2:5173", 
+              "http://10.142.215.2:3000" */
+            ], 
     methods: ["GET", "POST", "PUT"], 
     credentials: true 
   }
 });
+
+// --- GLOBAL STATE (Moved to top so routes can access it) ---
+let onlineUsers = {}; 
 
 app.use(cors());
 app.use(express.json({ limit: "10mb" })); 
@@ -74,7 +80,7 @@ const User = mongoose.model('User', userSchema);
 
 const groupSchema = new mongoose.Schema({
   name: { type: String, required: true },
-  groupPic: { type: String, default: "" }, // <--- ADDED THIS FIELD
+  groupPic: { type: String, default: "" }, 
   members: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], 
   admin: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   createdAt: { type: Date, default: Date.now }
@@ -92,7 +98,9 @@ const messageSchema = new mongoose.Schema({
   reactions: [{ 
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     emoji: String 
-  }]       
+  }],
+  // --- NEW FIELD: Tracks users who deleted this message for themselves ---
+  deletedFor: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]       
 });
 const Message = mongoose.model('Message', messageSchema);
 
@@ -187,28 +195,33 @@ app.get('/user/:id', async (req, res) => {
 app.get('/messages', async (req, res) => { 
     const { sender, receiver } = req.query;
     try {
+        // We assume the one requesting is the 'sender' or 'receiver' parameter logic
+        // Ideally you pass ?requesterId=... but for now we filter in the query:
+        // Exclude messages where deletedFor contains the requester (sender/receiver)
+        
         const messages = await Message.find({ 
             isGroup: false,
-            $or: [{sender, receiver}, {sender: receiver, receiver: sender}] 
+            $or: [{sender, receiver}, {sender: receiver, receiver: sender}],
+            // If the message is deleted for this user, do not return it
+            deletedFor: { $ne: sender } // Assuming 'sender' query param is the current logged-in user
         })
         .populate('sender', 'name profilePic'); 
         res.json(messages);
     } catch(e) { res.status(500).json({error: "Fetch failed"}); }
 });
 
-app.post('/delete-message', async (req, res) => {
-  const { msgId } = req.body;
-  try {
-    await Message.findByIdAndDelete(msgId);
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: "Failed to delete" }); }
+// --- UPDATED DELETE ROUTE (Dependency Injection) ---
+app.post('/delete-message', (req, res) => {
+    // Pass the Message model here to avoid circular dependency
+    deleteMessage(req, res, io, onlineUsers, Message);
 });
 
 app.get('/group-messages/:groupId', async (req, res) => {
     try {
         const messages = await Message.find({ 
             receiver: req.params.groupId,
-            isGroup: true 
+            isGroup: true
+            // Note: In a real app, you should filter `deletedFor` here using req.user.id
         })
         .populate('sender', 'name profilePic'); 
         res.json(messages);
@@ -349,7 +362,6 @@ app.post('/respond-follow', async (req, res) => {
 });
 
 // --- SOCKET LOGIC ---
-let onlineUsers = {}; 
 
 io.on("connection", (socket) => {
   
